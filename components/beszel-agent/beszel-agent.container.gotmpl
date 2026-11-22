@@ -24,13 +24,11 @@ Environment=KEY="{{.hostkey}}"
 # The account's Podman API, read-only: the proxy's socket, not Podman's
 # (forma refuses a mount of the account's runtime directory). The agent
 # still sees this account's containers only.
-# Under SELinux the container (container_t) may not connect to the proxy, a
-# process of the account (user_t): the agent then reports host metrics
-# without container stats.
 Volume=beszel-agent-api.volume:/run/podman-api
 Environment=DOCKER_HOST=unix:///run/podman-api/podman.sock
-# No SecurityLabelDisable=: forma maps the account to user_u, whose role
-# may not run containers unconfined (spc_t)
+# container_t plus a connect to the proxy, and nothing else outside the
+# container (selinux/beszel_agent.cil)
+SecurityLabelType=beszel_agent.process
 Network=host
 
 [Install]

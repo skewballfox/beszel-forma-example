@@ -1,0 +1,68 @@
+policy_module(beszel_api_proxy, 1.0.0)
+
+########################################
+#
+# podman-api-proxy runs in its own domain so its socket carries a label the
+# agent's container type (beszel_agent.cil) can be allowed to connect to.
+# Containers may not connect to the account's own sockets (user_t), and
+# allowing that would reach every socket the account has, the user bus and
+# Podman's included (the agent shares the host network namespace, so
+# abstract sockets too).
+#
+# Forma maps the account to user_u, which cannot switch SELinux user or
+# role, so the domain is entered by a type transition from user_t on the
+# program's own label (beszel_api_proxy.fc), and is associated with user_r.
+#
+# NOT YET RUN. The rules below are the expected minimum; finish them from
+# the AVCs of a real start (journalctl -g avc). Check which domain the
+# account's user manager (ps -eZ | grep 'systemd --user') and its Podman
+# service run in: the rules assume user_t, and allow container_runtime_t
+# for Podman.
+
+gen_require(`
+	type user_t, gconf_home_t, data_home_t, container_file_t;
+	type container_runtime_t;
+	role user_r;
+')
+
+type beszel_api_proxy_t;
+type beszel_api_proxy_exec_t;
+application_domain(beszel_api_proxy_t, beszel_api_proxy_exec_t)
+role user_r types beszel_api_proxy_t;
+
+# The user manager starts it (with NoNewPrivileges=)
+domain_auto_trans(user_t, beszel_api_proxy_exec_t, beszel_api_proxy_t)
+allow user_t beszel_api_proxy_t:process2 nnp_transition;
+allow user_t beszel_api_proxy_t:process { signal sigkill };
+# The account's materia installs the program, a data file of the
+# component, and replaces it on updates. Forma relabels it after each
+# update (Relabel, run from the PostScript).
+allow user_t beszel_api_proxy_exec_t:file manage_file_perms;
+
+# A Python program: the interpreter, its libraries and the program itself
+corecmd_exec_bin(beszel_api_proxy_t)
+files_read_usr_files(beszel_api_proxy_t)
+libs_use_ld_so(beszel_api_proxy_t)
+libs_use_shared_libs(beszel_api_proxy_t)
+miscfiles_read_localization(beszel_api_proxy_t)
+kernel_read_system_state(beszel_api_proxy_t)
+dev_read_urand(beszel_api_proxy_t)
+allow beszel_api_proxy_t beszel_api_proxy_exec_t:file { read open getattr map execute };
+
+# sd_notify (Type=notify) to the user manager
+init_dgram_send(beszel_api_proxy_t)
+allow beszel_api_proxy_t user_t:unix_dgram_socket sendto;
+
+# Its own socket, in the beszel-agent-api volume:
+# ~/.local/share/containers/storage/volumes/beszel-agent-api/_data
+allow beszel_api_proxy_t self:unix_stream_socket { create_stream_socket_perms connectto };
+userdom_search_user_home_dirs(beszel_api_proxy_t)
+allow beszel_api_proxy_t { gconf_home_t data_home_t }:dir search_dir_perms;
+allow beszel_api_proxy_t container_file_t:dir { getattr search write add_name remove_name };
+allow beszel_api_proxy_t container_file_t:sock_file { create unlink getattr setattr };
+
+# The account's Podman API, %t/podman/podman.sock. Nothing else in the
+# runtime directory: the program opens only this path.
+userdom_search_user_tmp_dirs(beszel_api_proxy_t)
+userdom_write_user_tmp_sockets(beszel_api_proxy_t)
+allow beszel_api_proxy_t { user_t container_runtime_t }:unix_stream_socket connectto;
