@@ -1,0 +1,24 @@
+[Unit]
+Description=beszel-server container
+# A user manager can't order itself after tailscaled.service, a system
+# unit: until tailscale0 has its address, the publish fails and Restart=
+# tries again
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Restart=on-failure
+RestartSec=5s
+
+[Container]
+Image=docker.io/henrygd/beszel:{{.containerTag}}
+ContainerName=beszel-server
+Environment=LISTEN="{{m_facts "interface.tailscale0.ip4.0"}}:{{.port}}"
+# The account's own Podman socket, not root's
+Volume=%t/podman/podman.sock:/var/run/docker.sock:ro
+Volume=beszel-data.volume:/beszel_data
+PublishPort={{ m_facts "interface.tailscale0.ip4.0" }}:{{.port}}:{{.port}}
+
+[Install]
+# Start with the account's user manager, which lingers from boot
+WantedBy=default.target

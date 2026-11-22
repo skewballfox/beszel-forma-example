@@ -1,0 +1,5 @@
+# Attributes for every host
+[components.beszel-agent]
+# The hub's public key, which every agent accepts: copy it from the hub's
+# "Add system" dialog
+hostkey = "ssh-ed25519 AAAA... (the hub's public key)"

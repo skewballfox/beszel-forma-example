@@ -1,0 +1,12 @@
+Defaults.containerTag = "latest"
+Defaults.port = "8090"
+
+[Settings]
+# Runs rootless, as the beszel account, through that account's own
+# materia. The setup script creates the account.
+User = "beszel"
+SetupScript = "beszel-server-setup.sh"
+CleanupScript = "beszel-server-cleanup.sh"
+
+[[Services]]
+Service = "beszel-server.service"

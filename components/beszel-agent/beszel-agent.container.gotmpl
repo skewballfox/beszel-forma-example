@@ -1,0 +1,26 @@
+[Unit]
+Description=beszel-agent container
+# A user manager can't order itself after tailscaled.service, a system
+# unit: until tailscale0 has its address, the listen fails and Restart=
+# tries again
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Restart=on-failure
+RestartSec=5s
+
+[Container]
+Image=docker.io/henrygd/beszel-agent:{{.containerTag}}
+ContainerName=beszel-agent
+Environment=LISTEN="{{m_facts "interface.tailscale0.ip4.0"}}:{{.port}}"
+Environment=KEY="{{.hostkey}}"
+# The account's own Podman socket (podman.socket in its user manager), not
+# root's: the agent sees this account's containers only
+Volume=%t/podman/podman.sock:/var/run/docker.sock:ro
+SecurityLabelDisable=true
+Network=host
+
+[Install]
+# Start with the account's user manager, which lingers from boot
+WantedBy=default.target
