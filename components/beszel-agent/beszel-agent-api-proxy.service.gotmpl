@@ -1,0 +1,19 @@
+# A plain user unit, not a Quadlet. The agent's only way to the account's
+# Podman: it forwards the agent's reads and refuses everything else
+# (podman-api-proxy). The socket goes in the beszel-agent-api volume, which
+# beszel-agent.container mounts at /run/podman-api.
+[Unit]
+Description=Read-only Podman API for beszel-agent
+Requires=podman.socket beszel-agent-api-volume.service
+After=podman.socket beszel-agent-api-volume.service
+
+[Service]
+Type=notify
+# A data file of this component, so run through the interpreter; -I keeps
+# PYTHONPATH and the like from the user manager's environment out
+ExecStart=/usr/bin/python3 -I {{ m_dataDir "beszel-agent" }}/podman-api-proxy \
+    %h/.local/share/containers/storage/volumes/beszel-agent-api/_data/podman.sock \
+    %t/podman/podman.sock
+NoNewPrivileges=yes
+Restart=on-failure
+RestartSec=2

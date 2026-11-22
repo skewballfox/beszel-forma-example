@@ -1,5 +1,6 @@
 #!/bin/sh
 # CleanupScript of the beszel-agent component. Materia runs it as root after the
-# account's materia has stopped and removed the component. It keeps the
-# beszel-agent account and its home; remove them by hand if you want them gone.
-echo "beszel-agent removed; the beszel-agent account and its home are kept" >&2
+# account's materia has stopped and removed the component. Forma removes
+# what it created for the component, and the account once no component runs
+# as it; the account's home is kept.
+exec forma revert beszel-agent --materia-lock held

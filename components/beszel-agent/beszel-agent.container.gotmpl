@@ -1,5 +1,8 @@
 [Unit]
 Description=beszel-agent container
+# The read-only Podman API (podman-api-proxy)
+Requires=beszel-agent-api-proxy.service
+After=beszel-agent-api-proxy.service
 # A user manager can't order itself after tailscaled.service, a system
 # unit: until tailscale0 has its address, the listen fails and Restart=
 # tries again
@@ -11,14 +14,23 @@ Restart=on-failure
 RestartSec=5s
 
 [Container]
-Image=docker.io/henrygd/beszel-agent:{{.containerTag}}
+# Built by forma (build/Containerfile), loaded into the account's storage
+Image=localhost/beszel/beszel-agent:latest
+Pull=never
+AutoUpdate=local
 ContainerName=beszel-agent
 Environment=LISTEN="{{m_facts "interface.tailscale0.ip4.0"}}:{{.port}}"
 Environment=KEY="{{.hostkey}}"
-# The account's own Podman socket (podman.socket in its user manager), not
-# root's: the agent sees this account's containers only
-Volume=%t/podman/podman.sock:/var/run/docker.sock:ro
-SecurityLabelDisable=true
+# The account's Podman API, read-only: the proxy's socket, not Podman's
+# (forma refuses a mount of the account's runtime directory). The agent
+# still sees this account's containers only.
+# Under SELinux the container (container_t) may not connect to the proxy, a
+# process of the account (user_t): the agent then reports host metrics
+# without container stats.
+Volume=beszel-agent-api.volume:/run/podman-api
+Environment=DOCKER_HOST=unix:///run/podman-api/podman.sock
+# No SecurityLabelDisable=: forma maps the account to user_u, whose role
+# may not run containers unconfined (spc_t)
 Network=host
 
 [Install]

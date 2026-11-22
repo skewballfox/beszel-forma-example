@@ -1,3 +1,0 @@
-# Attributes for the host named "warden"
-[components.beszel-server]
-containerTag = "stable" # override the default containerTag with "stable"

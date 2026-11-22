@@ -1,12 +1,24 @@
-Defaults.containerTag = "latest"
 Defaults.port = 45876
 
 [Settings]
 # Runs rootless, as the beszel-agent account, through that account's own
-# materia. The setup script creates the account.
+# materia. The scripts call forma, which creates the account.
 User = "beszel-agent"
 SetupScript = "beszel-agent-setup.sh"
+PostScript = "beszel-agent-setup.sh"
 CleanupScript = "beszel-agent-cleanup.sh"
 
 [[Services]]
 Service = "beszel-agent.service"
+
+[Forma.Account]
+Name = "beszel-agent"
+
+[[Forma.Images]]
+Tag = "beszel/beszel-agent:latest"
+Containerfile = "build/Containerfile"
+
+[Forma.Images.Update]
+# Rebuild when the upstream tag moves
+Schedule = "daily"
+Triggers = ["base-digest"]
