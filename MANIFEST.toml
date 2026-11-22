@@ -10,3 +10,9 @@ Roles = ["base"]
 [Hosts.warden]
 Components = ["beszel-server"]  # you can directly assign components to hosts
 Roles = ["base"]
+
+# warden runs the hub's stable tag: an extension adds this build argument
+# to the component's image and leaves the rest alone
+[[Hosts.warden.Extensions.beszel-server.Forma.Images]]
+Tag = "beszel/beszel:latest"
+BuildArgs = { TAG = "stable" }

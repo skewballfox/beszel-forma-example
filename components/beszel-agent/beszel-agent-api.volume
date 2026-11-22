@@ -1,0 +1,4 @@
+# Holds podman-api-proxy's socket, mounted at /run/podman-api in
+# beszel-agent.container.
+[Volume]
+VolumeName=beszel-agent-api

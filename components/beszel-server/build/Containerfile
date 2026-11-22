@@ -1,0 +1,5 @@
+# The upstream image, unchanged. Forma's builder pulls it as a base image,
+# and the account loads the result: service accounts never pull.
+# TAG is a build argument so a host can pick another tag (MANIFEST.toml).
+ARG TAG=latest
+FROM docker.io/henrygd/beszel:${TAG}

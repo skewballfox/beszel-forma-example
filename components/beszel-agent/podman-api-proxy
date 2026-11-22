@@ -1,0 +1,181 @@
+#!/usr/bin/python3 -I
+"""Read-only filter between beszel-agent and the account's Podman API.
+
+Run by beszel-agent-api-proxy.service. Forma refuses a Quadlet that mounts
+the account's Podman socket: anything that can talk to it can start a
+container with any mount, device or label the account may use, and so leave
+its sandbox. `:ro` on a socket mount doesn't help, since writing a request
+is how a socket is used. So beszel-agent gets this proxy's socket instead,
+through the beszel-agent-api volume. It forwards the GET requests the agent
+makes (agent/docker.go and agent/docker_registry.go, beszel after v0.21.2) and
+answers everything else with 403.
+
+One request per connection: the proxy reads one request, forwards it with
+Connection: close, and copies the response back until Podman closes.
+
+Usage: podman-api-proxy LISTEN_PATH PODMAN_SOCKET
+"""
+
+import asyncio
+import logging
+import os
+import re
+import socket
+import struct
+import sys
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
+log = logging.getLogger("podman-api-proxy")
+
+# beszel's own check of container IDs (dockerContainerIDPattern)
+CONTAINER = r"[0-9a-fA-F]{12,64}"
+ALLOWED = [
+    re.compile(pattern)
+    for pattern in (
+        r"/version",
+        r"/info",
+        r"/containers/json",
+        rf"/containers/{CONTAINER}/(?:json|stats|logs)",
+        # The image's name, path-escaped: update checks against its registry
+        r"/images/(?P<image>[^/]+)/json",
+    )
+]
+# A Docker client may put the API version in front: /v1.41/containers/json
+API_VERSION = re.compile(r"/v[0-9]+\.[0-9]+(?=/)")
+IMAGE_NAME = re.compile(r"[a-z0-9][a-z0-9._/:@-]*")
+# Headers that would give a GET a body, or turn the connection into a stream
+REFUSED_HEADERS = {"content-length", "transfer-encoding", "upgrade", "expect"}
+HOP_BY_HOP = {"connection", "keep-alive", "proxy-connection"}
+MAX_HEAD = 64 * 1024
+
+
+class Refused(Exception):
+    pass
+
+
+def check_target(target: str) -> None:
+    """Raise Refused unless target is an endpoint the agent reads."""
+    parts = urlsplit(target)
+    if parts.scheme or parts.netloc or parts.fragment:
+        raise Refused("not an origin-form request target")
+    path = API_VERSION.sub("", parts.path, count=1)
+    for pattern in ALLOWED:
+        if (found := pattern.fullmatch(path)) is None:
+            continue
+        match found.groupdict().get("image"):
+            case None:
+                return
+            case escaped:
+                image = unquote(escaped)
+                # Escaped once, by the client; no dot segments for Podman's router
+                if "%" in image or ".." in image or not IMAGE_NAME.fullmatch(image):
+                    raise Refused(f"image name {image!r}")
+                return
+    raise Refused(f"path {parts.path!r}")
+
+
+def parse_head(head: bytes) -> tuple[str, list[tuple[str, str]]]:
+    """Check a request head and return its target and the headers to forward."""
+    try:
+        lines = head.decode("ascii").split("\r\n")
+    except UnicodeDecodeError as e:
+        raise Refused("request head is not ASCII") from e
+    match lines[0].split(" "):
+        case ["GET", target, "HTTP/1.1" | "HTTP/1.0"]:
+            check_target(target)
+        case [method, _, _]:
+            raise Refused(f"method {method!r}")
+        case _:
+            raise Refused("malformed request line")
+    headers = []
+    for line in lines[1:]:
+        if not line:
+            continue
+        name, sep, value = line.partition(":")
+        match sep, name.strip().lower():
+            case "", _:
+                raise Refused("malformed header")
+            case _, lower if lower in REFUSED_HEADERS:
+                if lower != "content-length" or value.strip() != "0":
+                    raise Refused(f"header {name!r}")
+            case _, lower if lower in HOP_BY_HOP:
+                continue
+            case _:
+                headers.append((name.strip(), value.strip()))
+    return target, headers
+
+
+async def refuse(writer: asyncio.StreamWriter, reason: str) -> None:
+    body = f"podman-api-proxy: {reason}\n".encode()
+    writer.write(
+        b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n"
+        + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+        + body
+    )
+    await writer.drain()
+
+
+async def handle(client_r, client_w, podman: Path) -> None:
+    sock = client_w.get_extra_info("socket")
+    pid, uid, _gid = struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+    upstream_w = None
+    try:
+        # The agent's container root is the account (rootless, no UserNS=)
+        if uid != os.getuid():
+            log.warning("pid %d: uid %d is not the account", pid, uid)
+            return
+        head = (await client_r.readuntil(b"\r\n\r\n"))[:-4]
+        try:
+            target, headers = parse_head(head)
+        except Refused as e:
+            log.warning("pid %d: refused %s: %s", pid, head.split(b"\r\n", 1)[0][:200], e)
+            await refuse(client_w, str(e))
+            return
+        upstream_r, upstream_w = await asyncio.open_unix_connection(podman)
+        lines = [f"GET {target} HTTP/1.1", *(f"{n}: {v}" for n, v in headers), "Connection: close"]
+        upstream_w.write(("\r\n".join(lines) + "\r\n\r\n").encode("ascii"))
+        await upstream_w.drain()
+        while chunk := await upstream_r.read(65536):
+            client_w.write(chunk)
+            await client_w.drain()
+    except (OSError, asyncio.IncompleteReadError, asyncio.LimitOverrunError) as e:
+        log.warning("pid %d: closing connection: %s", pid, e)
+    finally:
+        for writer in (client_w, upstream_w):
+            if writer is not None:
+                writer.close()
+
+
+def notify_ready() -> None:
+    address = os.environ.get("NOTIFY_SOCKET")
+    if not address:
+        return
+    if address.startswith("@"):
+        address = "\0" + address[1:]
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+        sock.connect(address)
+        sock.sendall(b"READY=1")
+
+
+async def serve(listen: Path, podman: Path) -> None:
+    listen.unlink(missing_ok=True)
+    os.umask(0o077)
+    server = await asyncio.start_unix_server(lambda r, w: handle(r, w, podman), path=listen, limit=MAX_HEAD)
+    log.info("forwarding reads from %s to %s", listen, podman)
+    notify_ready()
+    async with server:
+        await server.serve_forever()
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    match sys.argv[1:]:
+        case [listen, podman]:
+            asyncio.run(serve(Path(listen), Path(podman)))
+        case _:
+            sys.exit(f"usage: {sys.argv[0]} LISTEN_PATH PODMAN_SOCKET")
+
+
+if __name__ == "__main__":
+    main()
