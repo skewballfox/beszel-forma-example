@@ -9,9 +9,12 @@ After=podman.socket beszel-agent-api-volume.service
 
 [Service]
 Type=notify
-# A data file of this component, so run through the interpreter; -I keeps
-# PYTHONPATH and the like from the user manager's environment out
-ExecStart=/usr/bin/python3 -I {{ m_dataDir "beszel-agent" }}/podman-api-proxy \
+# Run directly, not through python3: its own file label is the entry point
+# of its SELinux domain (selinux/beszel_api_proxy.te), and the interpreter's
+# label would move every Python program the account runs into that domain.
+# Python's isolated mode (-I) comes from the program's shebang line, so
+# PYTHONPATH and the like from the user manager's environment are ignored.
+ExecStart={{ m_dataDir "beszel-agent" }}/podman-api-proxy \
     %h/.local/share/containers/storage/volumes/beszel-agent-api/_data/podman.sock \
     %t/podman/podman.sock
 NoNewPrivileges=yes

@@ -22,3 +22,16 @@ Containerfile = "build/Containerfile"
 # Rebuild when the upstream tag moves
 Schedule = "daily"
 Triggers = ["base-digest"]
+
+[Forma.SELinux]
+# beszel_api_proxy.te: the proxy's domain (built with its .fc).
+# beszel_agent.cil: the agent's container type, built on container-selinux's
+# udica templates, loaded in the same transaction.
+Modules = [
+  "selinux/beszel_api_proxy.te",
+  "selinux/beszel_agent.cil",
+]
+Templates = ["base_container", "net_container"]
+# The program, after the account's materia writes it (the PostScript runs
+# forma again). The home is forma's home_base on this host plus the account.
+Relabel = ["/var/home/beszel-agent/.local/share/materia/components/beszel-agent/podman-api-proxy"]

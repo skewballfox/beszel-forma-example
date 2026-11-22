@@ -1,0 +1,4 @@
+# The proxy program, as the account's materia installs it (m_dataDir). Its
+# label is the entry point of beszel_api_proxy_t (beszel_api_proxy.te).
+# HOME_ROOT is /home or /var/home, whichever the host uses for homes.
+HOME_ROOT/beszel-agent/\.local/share/materia/components/beszel-agent/podman-api-proxy	--	gen_context(system_u:object_r:beszel_api_proxy_exec_t,s0)
